@@ -430,17 +430,22 @@ class MetasoChatClient:
     def stream(self, query: str, *, mode: str, engine_type: str = "",
                conversation_id: str | None = None,
                parent_message_id: str | None = None) -> Iterator[dict]:
-        """逐条 yield 归一化事件；三类失败轴各至多重试一次（未吐事件前）：
+        """逐条 yield 归一化事件；三类失败轴自动恢复（未吐内容事件前才重试）：
 
-        - 4001（窗口烧干）：有池换下一出口重试；无池上抛（自愈前重试无意义）；
-        - 429（无票即拒/抖动）：自动身份换新；有池连出口一起换；钉死身份上抛；
+        - 4001（窗口烧干）：有池换下一出口重试一次；无池上抛（自愈前重试无意义）；
+        - 429（无票即拒/热 IP）：**池（轮换隧道）下重试预算 3 次** —— 每次换出口=
+          换一个新出口 IP 抽样（429 响应 ~0.3s，抽样成本极低），第 2 次失败后升级
+          Chrome TLS 指纹；无池只试 1 次（换身份）；钉死身份上抛；
         - WAF 挑战：有池先换出口，仍被挑再升级 curl_cffi；不可用则上抛。
-        总尝试封顶 4。
+        总尝试封顶 6。
         """
         emitted_content = False   # 只看内容事件；meta 控制帧后重试是安全的（实测 429 前有 meta）
-        quota_tried = rate_tried = False
+        quota_tried = False
+        rate_retries = 0
         waf_actions = 0
-        for _attempt in range(4):
+        # 429 重试预算：池（尤其轮换隧道）下每次重试=换一个新出口 IP 抽样；无池只试 1 次。
+        max_rate_retries = 3 if self.pool else 1
+        for _attempt in range(6):
             try:
                 for ev in self._stream_once(
                         query, mode=mode, engine_type=engine_type,
@@ -456,16 +461,19 @@ class MetasoChatClient:
                 quota_tried = True
                 self.rotate_egress()
             except RateLimitedError:
-                if emitted_content or rate_tried >= 2 or not self.identity_generated:
+                if emitted_content or rate_retries >= max_rate_retries \
+                        or not self.identity_generated:
                     raise
-                rate_tried += 1
+                rate_retries += 1
                 if not self.rotate_egress():
                     self.rotate_identity()
-                if rate_tried == 2:
+                if rate_retries == 2:
                     # 两连 429：换身份+换出口都不行 ⇒ 很可能是 TLS 指纹层被拒
-                    # （python-requests JA3 上黑名单，实测 2026-09-24）⇒ 升级 Chrome 指纹
+                    # （python-requests JA3，实测 2026-09-24）⇒ 升级 Chrome 指纹
                     if not self._escalate_transport():
                         raise
+                if self.pool:
+                    time.sleep(0.6)   # 换连接后给上游闸门一点缓冲
             except RiskControlError:
                 if emitted_content or waf_actions >= 2:
                     raise

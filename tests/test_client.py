@@ -167,6 +167,50 @@ def test_transport_pin_escalates_at_boot():
     assert c2.transport == "requests"
 
 
+def test_rate_429_with_pool_samples_up_to_three_ips(monkeypatch):
+    """池（轮换隧道）下 429 重试预算=3：每次换出口抽样，第 2 次失败后升 Chrome 指纹。
+
+    全部抽样都热时必须恰好尝试 4 次（原始+3）后原样上抛 —— 预算耗尽不静默吞。
+    """
+    c = make_client(ms_proxy_pool="http://a:1,http://b:2")
+    calls = {"n": 0, "escalated": 0}
+
+    def always_hot(self, *a, **k):
+        calls["n"] += 1
+        raise RateLimitedError("热 IP")
+
+    def fake_escalate(self):
+        calls["escalated"] += 1
+        return True
+
+    monkeypatch.setattr(MetasoChatClient, "_stream_once", always_hot)
+    monkeypatch.setattr(MetasoChatClient, "_escalate_transport", fake_escalate)
+    monkeypatch.setattr("app.client.time.sleep", lambda _s: None)
+    with pytest.raises(RateLimitedError):
+        list(c.stream("q", mode="concise"))
+    assert calls["n"] == 4, "池模式 429 预算=3 次重试"
+    assert calls["escalated"] == 1, "第 2 次失败后必须升级 Chrome 指纹"
+    assert c.stats["egress_rotations"] == 3
+
+
+def test_rate_429_succeeds_on_third_sample(monkeypatch):
+    c = make_client(ms_proxy_pool="http://a:1,http://b:2,http://c:3")
+    calls = {"n": 0}
+
+    def hot_then_clean(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RateLimitedError("热 IP")
+        yield from [{"delta": {"content": "ok"}}, {"done": True}]
+
+    monkeypatch.setattr(MetasoChatClient, "_stream_once", hot_then_clean)
+    monkeypatch.setattr("app.client.time.sleep", lambda _s: None)
+    events = list(c.stream("q", mode="concise"))
+    assert calls["n"] == 3
+    assert events[-1] == {"done": True}
+    assert c.stats["egress_rotations"] == 2
+
+
 def test_4001_rotates_egress_once_when_pool_present(monkeypatch):
     c = make_client(ms_proxy_pool="http://a:1,http://b:2")
     assert c.http.proxies["http"] == "http://a:1"
