@@ -283,8 +283,10 @@ class MetasoChatClient:
         if self.connection_close:
             headers = {**headers, "connection": "close"}
         if self.transport == "curl_cffi":
+            # curl_cffi 0.16 的流式迭代未实现（iter_content → NotImplementedError）
+            # ⇒ 整包下载（SSE 体量小），由 _iter_sse_lines(buffered=True) 切行
             return self._curl.post(url, json=body, headers=headers,
-                                   stream=True, timeout=float(timeout[1]))
+                                   timeout=float(timeout[1]))
         return self.http.post(url, json=body, headers=headers,
                               stream=True, timeout=timeout)
 
