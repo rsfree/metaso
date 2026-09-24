@@ -295,7 +295,7 @@ class MetasoChatClient:
         try:
             r = self._http_get(f"{self.settings.ms_base}/",
                                timeout=min(30.0, self.settings.ms_timeout),
-                               connection_close=self._connection_close)
+                               connection_close=self.connection_close)
         except Exception as e:  # noqa: BLE001 - requests/curl_cffi 异常族不同，统一转译
             raise UpstreamUnavailableError(
                 f"metaso 首页请求失败: {e}") from e
@@ -311,7 +311,7 @@ class MetasoChatClient:
         try:
             info = self._http_get(f"{self.settings.ms_base}/api/my-info",
                                   timeout=min(30.0, self.settings.ms_timeout),
-                                  connection_close=self._connection_close)
+                                  connection_close=self.connection_close)
             self.logged_in = info.json().get("errCode") == 0
         except Exception:  # noqa: BLE001 - 预热失败不致命，搜索仍可能成功
             self.logged_in = bool(self.settings.ms_cookie)
