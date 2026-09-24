@@ -276,6 +276,8 @@ class ChatService:
             return f"data: {json.dumps(payload_chunk, ensure_ascii=False)}"
 
         yield chunk({"role": "assistant", "content": ""})
+        # 首字节加速：路由完成即刻宣告（前端可立即渲染"搜索中"），不等上游开口
+        yield f"data: {json.dumps({'meta': {'search_started': True, 'channel': route.model}}, ensure_ascii=False)}"
         if warnings or unsupported:
             yield f"data: {json.dumps({'warnings': warnings, 'unsupported': unsupported}, ensure_ascii=False)}"
 
@@ -297,6 +299,8 @@ class ChatService:
                     yield f"data: {json.dumps({'citations': citations}, ensure_ascii=False)}"
                 if ev.get("meta"):
                     meta.update(ev["meta"])
+                    # 上游控制帧（conversation_init 等）即刻透传 —— 比 reasoning 更早的首字节
+                    yield f"data: {json.dumps({'meta': ev['meta']}, ensure_ascii=False)}"
         except ServiceError as e:
             yield f"data: {json.dumps({'error': e.body()['error']}, ensure_ascii=False)}"
             yield "data: [DONE]"
