@@ -273,13 +273,13 @@ class ChatService:
                 "model": route.model,
                 "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
             }
-            return f"data: {json.dumps(payload_chunk, ensure_ascii=False)}"
+            return f"data: {json.dumps(payload_chunk, ensure_ascii=False)}\n\n"
 
         yield chunk({"role": "assistant", "content": ""})
         # 首字节加速：路由完成即刻宣告（前端可立即渲染"搜索中"），不等上游开口
-        yield f"data: {json.dumps({'meta': {'search_started': True, 'channel': route.model}}, ensure_ascii=False)}"
+        yield f"data: {json.dumps({'meta': {'search_started': True, 'channel': route.model}}, ensure_ascii=False)}\n\n"
         if warnings or unsupported:
-            yield f"data: {json.dumps({'warnings': warnings, 'unsupported': unsupported}, ensure_ascii=False)}"
+            yield f"data: {json.dumps({'warnings': warnings, 'unsupported': unsupported}, ensure_ascii=False)}\n\n"
 
         citations: list[Any] = []
         meta: dict[str, Any] = {}
@@ -296,20 +296,20 @@ class ChatService:
                     yield chunk({"content": d["content"]})
                 if "citations" in ev:
                     citations = ev["citations"]
-                    yield f"data: {json.dumps({'citations': citations}, ensure_ascii=False)}"
+                    yield f"data: {json.dumps({'citations': citations}, ensure_ascii=False)}\n\n"
                 if ev.get("meta"):
                     meta.update(ev["meta"])
                     # 上游控制帧（conversation_init 等）即刻透传 —— 比 reasoning 更早的首字节
-                    yield f"data: {json.dumps({'meta': ev['meta']}, ensure_ascii=False)}"
+                    yield f"data: {json.dumps({'meta': ev['meta']}, ensure_ascii=False)}\n\n"
         except ServiceError as e:
-            yield f"data: {json.dumps({'error': e.body()['error']}, ensure_ascii=False)}"
-            yield "data: [DONE]"
+            yield f"data: {json.dumps({'error': e.body()['error']}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
             return
 
         if truncated:
-            yield f"data: {json.dumps({'warnings': ['上游流被提前断开，答案可能不完整']}, ensure_ascii=False)}"
+            yield f"data: {json.dumps({'warnings': ['上游流被提前断开，答案可能不完整']}, ensure_ascii=False)}\n\n"
         yield chunk({}, finish="stop")
         if session_id and ref is not None:
             self.sessions.put(session_id, ref)
-            yield f"data: {json.dumps({'session': {'chat_id': ref.chat_id}}, ensure_ascii=False)}"
-        yield "data: [DONE]"
+            yield f"data: {json.dumps({'session': {'chat_id': ref.chat_id}}, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
