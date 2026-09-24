@@ -67,6 +67,10 @@ class Gate:
             self._cooldown_until = time.monotonic() + self.cooldown
             self._rate_limited_total += 1
 
+    def tune(self, min_interval: float) -> None:
+        """按凭据模式调整节流间隔（登录态实测可持续 ~4 发/10s ⇒ 2.5s；匿名 15s）。"""
+        self.min_interval = min_interval
+
     # ---------------------------------------------------------------- 诊断
 
     def stats(self) -> dict:

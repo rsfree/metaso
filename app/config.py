@@ -79,6 +79,13 @@ class Settings:
             return []
         return [p.strip() for p in raw.split(",") if p.strip()]
 
+    def min_interval_for(self, has_login: bool) -> float:
+        """按凭据模式的节流间隔：显式设置（env）优先；未设置时自动 ——
+        登录态实测可持续 ~4 发/10s ⇒ 2.5s；匿名 ~13 发/出口/窗口 ⇒ 保守 15s。"""
+        if _s("METASO_MIN_INTERVAL"):
+            return self.ms_min_interval
+        return 2.5 if has_login else 15.0
+
     # ------------------------------------------------------------ 会话登记表
     chat_session_ttl: float = field(default_factory=lambda: _f("CHAT_SESSION_TTL", 1800.0))
     chat_session_max: int = field(default_factory=lambda: _i("CHAT_SESSION_MAX", 512))

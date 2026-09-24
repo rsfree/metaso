@@ -24,6 +24,9 @@ from .service import ChatService
 settings = get_settings()
 client = MetasoChatClient(settings)
 gate = Gate(settings)
+# 节流按凭据模式自动调速：登录态实测可持续 ~4 发/10s ⇒ 2.5s；匿名保守 15s
+# （env 显式设置 METASO_MIN_INTERVAL 时以 env 为准）
+gate.tune(settings.min_interval_for(client.mode == "login"))
 service = ChatService(settings, client, gate)
 
 app = FastAPI(title="metaso-service", version=__version__,

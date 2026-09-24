@@ -51,13 +51,15 @@ META_TOKEN_RE = re.compile(r'<meta\s+id="meta-token"\s+content="([^"]+)"\s*/?>')
 #: 干跑时用的占位 token —— 干跑的定义就是「不触上游」
 PLACEHOLDER_TOKEN = "<meta-token:干跑未抓取>"
 
-#: 指纹 cookie 形状（名称 -> 值长度；0 = 空值）。来自真实铸造样本（只取长度与字符集）：
-#: 服务端只验存在性不验内容，同形随机值即可过门票层。
+#: 门票三件套（指纹 cookie 名）—— 随机同形值即可过（服务端只验存在性）
 FINGERPRINT_COOKIES: dict[str, int] = {
     "tid": 36,
     "_c_WBKFRo": 40,
     "_nb_ioWEgULi": 0,
 }
+
+#: 钉死身份（含登录态）429 的恢复等待：实测突发窗口 +10s 恢复（2026-09-24）
+PIN_RETRY_WAIT = 10.0
 
 _ALNUM = string.ascii_letters + string.digits
 
@@ -180,6 +182,16 @@ class MetasoChatClient:
             self.http.cookies.update(_parse_cookie(settings.ms_cookie))
         else:
             self.rotate_identity()
+
+        # 凭据模式（决定 429 恢复策略与节流节奏，见 stream）：
+        #   login     — cookie 含 uid+sid：走登录积分（500/天），突发限速 ~4 发/10s
+        #   pinned    — 钉死指纹/自备身份（无 uid+sid）
+        #   anonymous — 自动随机指纹身份（~13 发/出口/窗口）
+        if settings.ms_cookie:
+            self.mode = ("login" if ("uid=" in settings.ms_cookie and "sid=" in settings.ms_cookie)
+                         else "pinned")
+        else:
+            self.mode = "anonymous"
 
         # 出口：代理池 > 单代理 > 直连。池按槽位粘住，失败类错误触发轮换。
         self.pool = list(settings.metaso_proxy_pool)
@@ -442,6 +454,7 @@ class MetasoChatClient:
         emitted_content = False   # 只看内容事件；meta 控制帧后重试是安全的（实测 429 前有 meta）
         quota_tried = False
         rate_retries = 0
+        pin_retries = 0
         unavail_retries = 0
         waf_actions = 0
         # 429 重试预算：池（尤其轮换隧道）下每次重试=换一个新出口 IP 抽样；无池只试 1 次。
@@ -462,17 +475,31 @@ class MetasoChatClient:
                 quota_tried = True
                 self.rotate_egress()
             except RateLimitedError:
-                if emitted_content or rate_retries >= max_rate_retries \
-                        or not self.identity_generated:
+                if emitted_content:
                     raise
-                rate_retries += 1
-                if not self.rotate_egress():
-                    self.rotate_identity()
-                if rate_retries == 2:
-                    # 两连 429：换身份+换出口都不行 ⇒ 很可能是 TLS 指纹层被拒
-                    # （python-requests JA3，实测 2026-09-24）⇒ 升级 Chrome 指纹
-                    if not self._escalate_transport():
+                if self.mode in ("login", "pinned"):
+                    # 钉死身份（含登录态）：429 = 突发窗口（实测 +10s 恢复）——
+                    # **绝不能换身份**（换指纹丢登录态）；有池可换出口（cookie 不动）；
+                    # 等待后**原样重试**，预算 2 次。
+                    if pin_retries >= 2:
                         raise
+                    pin_retries += 1
+                    if self.pool:
+                        self.rotate_egress()
+                    time.sleep(PIN_RETRY_WAIT)
+                else:
+                    if rate_retries >= max_rate_retries or not self.identity_generated:
+                        raise
+                    rate_retries += 1
+                    if not self.rotate_egress():
+                        self.rotate_identity()
+                    if rate_retries == 2:
+                        # 两连 429：换身份+换出口都不行 ⇒ 很可能是 TLS 指纹层被拒
+                        # （python-requests JA3，实测 2026-09-24）⇒ 升级 Chrome 指纹
+                        if not self._escalate_transport():
+                            raise
+                    if self.pool:
+                        time.sleep(0.6)   # 换连接后给上游闸门一点缓冲
                 if self.pool:
                     time.sleep(0.6)   # 换连接后给上游闸门一点缓冲
             except UpstreamUnavailableError:
@@ -596,6 +623,7 @@ class MetasoChatClient:
         return {
             "base": self.settings.ms_base,
             "ready": self.settings.metaso_ready,
+            "mode": self.mode,
             "logged_in": self.logged_in,
             "cookie_configured": bool(self.settings.ms_cookie),
             "identity": "pinned" if self.settings.ms_cookie else "generated",

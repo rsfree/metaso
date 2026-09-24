@@ -130,22 +130,6 @@ def test_auto_identity_seeded_and_rotated_once_on_429(monkeypatch):
     assert c.stats["identity_rotations"] == before + 1
 
 
-def test_pinned_identity_never_rotated(monkeypatch):
-    c = make_client(ms_cookie="aliyungf_tc=pinned")
-    assert c.identity_generated is False
-    calls = {"n": 0}
-
-    def boom(self, *a, **k):
-        calls["n"] += 1
-        raise RateLimitedError("桶满")
-
-    monkeypatch.setattr(MetasoChatClient, "_stream_once", boom)
-    with pytest.raises(RateLimitedError):
-        list(c.stream("q", mode="detail"))
-    assert calls["n"] == 1
-    assert c.stats["identity_rotations"] == 0
-
-
 def test_no_retry_after_events_emitted(monkeypatch):
     """已向调用方吐过事件再遇 429：不能重试（会重复正文）。"""
     c = make_client(ms_cookie="aliyungf_tc=pinned")
@@ -209,6 +193,80 @@ def test_rate_429_succeeds_on_third_sample(monkeypatch):
     assert calls["n"] == 3
     assert events[-1] == {"done": True}
     assert c.stats["egress_rotations"] == 2
+
+
+def test_mode_detection_login_pinned_anonymous():
+    """凭据三模式：uid+sid=login（走登录积分）｜其他 cookie=pinned｜无 cookie=anonymous。"""
+    assert make_client(ms_cookie="uid=u1;sid=s1;tid=t;_c_WBKFRo=x;_nb_ioWEgULi=").mode == "login"
+    assert make_client(ms_cookie="tid=t;_c_WBKFRo=x").mode == "pinned"
+    assert make_client().mode == "anonymous"
+
+
+def test_login_429_waits_and_retries_same_identity(monkeypatch):
+    """登录态 429 = 突发窗口（实测 +10s 恢复）⇒ 等待后原样重试，绝不换身份。"""
+    c = make_client(ms_cookie="uid=u1;sid=s1;tid=t;_c_WBKFRo=x;_nb_ioWEgULi=")
+    calls = {"n": 0, "sleeps": []}
+
+    def hot_once(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RateLimitedError("突发窗口")
+        yield from [{"delta": {"content": "ok"}}, {"done": True}]
+
+    monkeypatch.setattr(MetasoChatClient, "_stream_once", hot_once)
+    monkeypatch.setattr("app.client.time.sleep", lambda s: calls["sleeps"].append(s))
+    rot0 = c.stats["identity_rotations"]
+    events = list(c.stream("q", mode="concise"))
+    assert calls["n"] == 2, "登录态 429 必须等窗口恢复后原样重试一次"
+    assert events[-1] == {"done": True}
+    assert c.stats["identity_rotations"] == rot0, "登录态绝不能换身份（丢登录态）"
+    assert 10.0 in calls["sleeps"], "按实测恢复窗口等待 10s"
+
+
+def test_login_429_twice_then_raise(monkeypatch):
+    c = make_client(ms_cookie="uid=u1;sid=s1;tid=t;_c_WBKFRo=x")
+    calls = {"n": 0}
+
+    def always_hot(self, *a, **k):
+        calls["n"] += 1
+        raise RateLimitedError("持续突发")
+
+    monkeypatch.setattr(MetasoChatClient, "_stream_once", always_hot)
+    monkeypatch.setattr("app.client.time.sleep", lambda s: None)
+    with pytest.raises(RateLimitedError):
+        list(c.stream("q", mode="concise"))
+    assert calls["n"] == 3, "钉死身份 429 预算=2 次等待重试"
+
+
+def test_pinned_identity_429_waits_but_never_rotated(monkeypatch):
+    """pinned（无 uid+sid）：429 走等待重试，但绝不轮换身份；预算耗尽原样上抛。"""
+    c = make_client(ms_cookie="aliyungf_tc=pinned")
+    assert c.identity_generated is False
+    calls = {"n": 0}
+
+    def boom(self, *a, **k):
+        calls["n"] += 1
+        raise RateLimitedError("桶满")
+
+    monkeypatch.setattr(MetasoChatClient, "_stream_once", boom)
+    monkeypatch.setattr("app.client.time.sleep", lambda s: None)
+    with pytest.raises(RateLimitedError):
+        list(c.stream("q", mode="detail"))
+    assert calls["n"] == 3, "钉死身份 429：等待重试 2 次后上抛"
+    assert c.stats["identity_rotations"] == 0
+
+
+def test_min_interval_autopace_by_mode(monkeypatch):
+    """节流自动调速：env 未设置时按模式（登录 2.5s / 匿名 15s）；显式设置优先。"""
+
+    s = get_settings()
+    monkeypatch.delenv("METASO_MIN_INTERVAL", raising=False)
+    assert s.min_interval_for(True) == 2.5
+    assert s.min_interval_for(False) == 15.0
+    monkeypatch.setenv("METASO_MIN_INTERVAL", "7")
+    s7 = dataclasses.replace(s, ms_min_interval=7.0)
+    assert s7.min_interval_for(True) == 7.0, "显式设置优先于自动调速"
+    assert s7.min_interval_for(False) == 7.0
 
 
 def test_4001_rotates_egress_once_when_pool_present(monkeypatch):
