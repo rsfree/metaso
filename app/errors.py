@@ -32,6 +32,8 @@ class ServiceError(Exception):
 
 
 class BadRequestError(ServiceError):
+    """请求参数错误（模型名未知 / messages 形态不对 / 带图片输入）。"""
+
     status_code = 400
     code = "invalid_request_error"
     err_type = "invalid_request_error"
@@ -72,6 +74,8 @@ class RiskControlError(ServiceError):
 
 
 class UpstreamUnavailableError(ServiceError):
+    """上游不可达 / 非 2xx 非 429 非 WAF（含连接失败、-500、5xx）。"""
+
     status_code = 502
     code = "upstream_unavailable"
     err_type = "api_error"

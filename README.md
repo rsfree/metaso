@@ -11,9 +11,11 @@
 
 | Method | Path | 说明 |
 |---|---|---|
-| POST | `/v1/chat/completions` | 搜索对话（`stream: true` 走 SSE）；`dry_run` 干跑不触上游 |
-| GET | `/v1/models` | 模型清单（6 条路由；未启用时返回空清单） |
-| GET | `/health` | 就绪度 + 身份/出口/传输诊断（脱敏） |
+| POST | `/v1/chat/completions` | 搜索对话（`stream: true` 走 SSE；`dry_run: true` 干跑不触上游）—— 需 Bearer key（配置了 `METASO_API_KEYS` 时） |
+| GET | `/v1/models` | 模型清单（6 条路由；未启用时返回空清单）—— 免鉴权 |
+| GET | `/health` | 就绪度 + 身份/出口/传输诊断（脱敏）—— 免鉴权 |
+| GET | `/llms.txt` | **给 LLM/Agent 读的说明书**（从注册表与异常类派生，防漂移门禁覆盖）—— 免鉴权 |
+| GET | `/` | HTML 落地页 —— 免鉴权 |
 
 模型：`metaso:search`（默认）/ `concise` / `research` / `scholar` / `video` /
 `deepresearch`（实验性，匿名必撞 4001）。别名：`metaso`、`ai-search`、`meta-search` 等。

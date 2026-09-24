@@ -19,6 +19,10 @@ echo "== /health =="
 curl -sf "http://127.0.0.1:$PORT/health" | $PY -c "import json,sys;d=json.load(sys.stdin);print(json.dumps({'ready':d['ready'],'egress':d['upstream']['egress']},ensure_ascii=False))"
 echo "== /v1/models =="
 curl -sf "http://127.0.0.1:$PORT/v1/models" | $PY -c "import json,sys;print(len(json.load(sys.stdin)['data']),'models')"
+echo "== /llms.txt 与 / 落地页（免鉴权发现面）=="
+curl -sf "http://127.0.0.1:$PORT/llms.txt" | head -1
+curl -sf -o /dev/null -w "llms.txt %{http_code} %{content_type}\n" "http://127.0.0.1:$PORT/llms.txt"
+curl -sf -o /dev/null -w "landing  %{http_code} %{content_type}\n" "http://127.0.0.1:$PORT/"
 echo "== dry-run search（零上游消耗）=="
 curl -sf -X POST "http://127.0.0.1:$PORT/v1/chat/completions" \
   -H 'content-type: application/json' \
