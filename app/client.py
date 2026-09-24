@@ -442,6 +442,7 @@ class MetasoChatClient:
         emitted_content = False   # 只看内容事件；meta 控制帧后重试是安全的（实测 429 前有 meta）
         quota_tried = False
         rate_retries = 0
+        unavail_retries = 0
         waf_actions = 0
         # 429 重试预算：池（尤其轮换隧道）下每次重试=换一个新出口 IP 抽样；无池只试 1 次。
         max_rate_retries = 3 if self.pool else 1
@@ -474,6 +475,14 @@ class MetasoChatClient:
                         raise
                 if self.pool:
                     time.sleep(0.6)   # 换连接后给上游闸门一点缓冲
+            except UpstreamUnavailableError:
+                # 连接级失败（隧道 curl 56 / 偶发 reset）= 本次抽样没抽好 ⇒
+                # 池模式下换一条连接（=换出口抽样）重试两次；无池上抛。
+                if emitted_content or unavail_retries >= 2 or not self.pool:
+                    raise
+                unavail_retries += 1
+                self.rotate_egress()
+                time.sleep(0.6)
             except RiskControlError:
                 if emitted_content or waf_actions >= 2:
                     raise
