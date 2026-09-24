@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .client import METASO_MODELS, MetasoChatClient
 from .config import get_settings
-from .errors import ServiceError
+from .errors import ServiceError, UnauthorizedError
 from .gate import Gate
 from .service import ChatService
 
@@ -22,6 +22,19 @@ service = ChatService(settings, client, gate)
 
 app = FastAPI(title="metaso-service", version="0.1.0",
               description="秘塔 AI 搜索（metaso.cn）免登录搜索对话服务 —— 契约见 docs/UPSTREAM.md")
+
+
+def require_api_key(request: Request) -> None:
+    """fail-closed 鉴权（baidu 同款）：配置了 METASO_API_KEYS 才启用；
+    发现面（/health /v1/models）免鉴权。"""
+    keys = settings.api_keys
+    if not keys:
+        return
+    auth = request.headers.get("authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else auth
+    if token not in keys:
+        raise UnauthorizedError(
+            "缺少或无效的 API key：请带 `Authorization: Bearer <key>` 请求头。")
 
 
 @app.exception_handler(ServiceError)
@@ -68,6 +81,7 @@ def models() -> dict:
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request) -> Any:
+    require_api_key(request)
     payload = await request.json()
     headers = {k.lower(): v for k, v in request.headers.items()}
     if payload.get("stream"):

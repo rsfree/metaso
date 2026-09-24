@@ -37,6 +37,14 @@ class BadRequestError(ServiceError):
     err_type = "invalid_request_error"
 
 
+class UnauthorizedError(ServiceError):
+    """缺失/无效 API key（METASO_API_KEYS 配置了才启用鉴权）。"""
+
+    status_code = 401
+    code = "invalid_api_key"
+    err_type = "authentication_error"
+
+
 class RateLimitedError(ServiceError):
     """429：无票即拒 / 窗口抖动。退避可解（自动身份会换新重试一次）。"""
 

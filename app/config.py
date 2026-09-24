@@ -66,6 +66,19 @@ class Settings:
     # —— 疑似环境跑容器时直接钉 curl_cffi。
     ms_transport: str = field(default_factory=lambda: _s("METASO_TRANSPORT", "requests").lower())
 
+    # ------------------------------------------------------------ 鉴权（fail-closed）
+    # API keys（逗号分隔）。非空 = chat 端点强制 `Authorization: Bearer <key>`
+    # （fail-closed，baidu 同款）；空 = 不启用鉴权（仅回环/隧道使用）。
+    # 上域名入口前必须配置。
+    ms_api_keys: str = field(default_factory=lambda: _s("METASO_API_KEYS"))
+
+    @property
+    def api_keys(self) -> list[str]:
+        raw = (self.ms_api_keys or "").strip()
+        if not raw:
+            return []
+        return [p.strip() for p in raw.split(",") if p.strip()]
+
     # ------------------------------------------------------------ 会话登记表
     chat_session_ttl: float = field(default_factory=lambda: _f("CHAT_SESSION_TTL", 1800.0))
     chat_session_max: int = field(default_factory=lambda: _i("CHAT_SESSION_MAX", 512))

@@ -5,9 +5,10 @@ from __future__ import annotations
 
 
 
-import dataclasses
+
 from app import main
 from app.client import MetasoChatClient
+import dataclasses
 from app.errors import QuotaExhaustedError, RateLimitedError
 from app.service import ChatService
 
@@ -147,6 +148,40 @@ def test_rate_limit_error_maps_429(api, monkeypatch):
                              "messages": [{"role": "user", "content": "q"}]})
     assert r.status_code == 429
     assert r.json()["error"]["code"] == "upstream_rate_limited"
+
+
+def test_auth_enforced_when_keys_configured(api, monkeypatch):
+    """fail-closed 鉴权：配置 METASO_API_KEYS 后 chat 必须 Bearer key；发现面免鉴权。"""
+
+    frozen = dataclasses.replace(main.settings, ms_api_keys="key-a, key-b")
+    monkeypatch.setattr(main, "settings", frozen)
+
+    r = api.post(CHAT, json={"model": "metaso:search",
+                             "messages": [{"role": "user", "content": "q"}]})
+    assert r.status_code == 401
+    err = r.json()["error"]
+    assert err["code"] == "invalid_api_key"
+    assert err["type"] == "authentication_error"
+
+    bad = api.post(CHAT, headers={"Authorization": "Bearer wrong"},
+                   json={"model": "metaso:search",
+                         "messages": [{"role": "user", "content": "q"}]})
+    assert bad.status_code == 401
+
+    ok = api.post(CHAT, headers={"Authorization": "Bearer key-a"},
+                  json={"model": "metaso:search",
+                        "messages": [{"role": "user", "content": "q"}]})
+    assert ok.status_code == 200
+
+    assert api.get("/health").status_code == 200
+    assert api.get("/v1/models").status_code == 200
+
+
+def test_auth_open_when_no_keys(api):
+    """未配置 METASO_API_KEYS = 鉴权关闭（仅回环/隧道使用的形态）。"""
+    r = api.post(CHAT, json={"model": "metaso:search",
+                             "messages": [{"role": "user", "content": "q"}]})
+    assert r.status_code == 200
 
 
 def test_not_ready_returns_empty_models_and_503_search(api, monkeypatch):
