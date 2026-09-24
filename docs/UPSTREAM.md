@@ -615,6 +615,22 @@ metaso-service 的出口必须落在大陆侧（CN 代理池 / CN 中继 / 家�
 = 在干净 CN 出口上换取更大的登录额度桶（替代匿名 ~13 发/窗口）。
 **部署铁律不变：egress 必须大陆家宽级干净出口。**
 
+**追记五：登录 cookie 的 KV 解剖（my-info 消融实证，2026-09-24 15:2x）**
+
+对 `/api/my-info` 做 KV 消融（免搜索额度、不受地理门禁）：
+
+| kv | 层 | 结论 |
+|---|---|---|
+| `tid` `_c_WBKFRo` `_nb_ioWEgULi` | 门票 | **必须存在，值不重要**（随机同形值实测过门票） |
+| **`uid` + `sid`** | 登录 | **充分必要**：二者即可 errCode=0；任缺一 401「需要登录」 |
+| `JSESSIONID` | 会话 | **不参与登录识别**（单独携带 401）—— warmup 时服务端自动下发并轮换 |
+| `aliyungf_tc` | WAF | 不需要自带 —— GET / 时服务端自动下发 |
+| `traceid` `hideLeftMenu` `minimax_h3_mode` | — | 无关（埋点/UI 偏好） |
+
+**最小登录 cookie** = `tid=<任意36位>;_c_WBKFRo=<任意40位>;_nb_ioWEgULi=;uid=<24hex>;sid=<30hex>`
+（已实测完整搜索流程通过；`JSESSIONID` 由 my-info warmup 自动获取）。注意 `sid` 是会话
+凭证：网页端登出/改密即失效，长期使用需定期重抄。
+
 ---
 
 ## 12. 合规提示
