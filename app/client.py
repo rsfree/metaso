@@ -276,7 +276,7 @@ class MetasoChatClient:
 
     def _http_post_stream(self, url: str, *, body: dict,
                           headers: dict, timeout: Any) -> Any:
-        if self._connection_close:
+        if self.connection_close:
             headers = {**headers, "connection": "close"}
         if self.transport == "curl_cffi":
             return self._curl.post(url, json=body, headers=headers,
