@@ -22,7 +22,7 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.client import MetasoChatClient  # noqa: E402
-from app.main import app, service  # noqa: E402
+from app.main import app, guest_channel, login_channels  # noqa: E402
 
 #: 一轮假上游事件的固定剧本（覆盖 meta/delta/citations/done 全形态）
 FAKE_STREAM = [
@@ -52,7 +52,8 @@ def stub_stream(monkeypatch):
 
 @pytest.fixture
 def api(stub_stream):
-    """TestClient + 已桩化的上游（每次测试全新会话表）。"""
-    service.sessions._data.clear()
+    """TestClient + 已桩化的上游（每次测试全新会话表与登录通路缓存）。"""
+    guest_channel.sessions._data.clear()
+    login_channels._data.clear()
     with TestClient(app) as c:
         yield c

@@ -180,6 +180,10 @@ class MetasoChatClient:
                       "egress_rotations": 0}
         if settings.ms_cookie:
             self.http.cookies.update(_parse_cookie(settings.ms_cookie))
+            if "tid" not in {c.name for c in self.http.cookies}:
+                # 登录 cookie 未带门票三件套 ⇒ 自动补随机指纹（存在即可、值不重要；
+                # rotate_identity 只写三件套，不动 uid/sid 登录对）
+                self.rotate_identity()
         else:
             self.rotate_identity()
 

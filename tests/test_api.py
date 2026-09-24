@@ -10,21 +10,21 @@ from app import main
 from app.client import MetasoChatClient
 import dataclasses
 from app.errors import QuotaExhaustedError, RateLimitedError
-from app.service import ChatService
 
 
 CHAT = "/v1/chat/completions"
 
 
-def test_health_reports_ready_and_diagnostics(api):
+def test_health_reports_channels(api):
     body = api.get("/health").json()
     assert body["status"] == "ok"
     assert body["ready"] is True
-    up = body["upstream"]
-    assert up["identity"] == "generated"
-    assert up["egress"] == "direct"
-    assert up["pool_size"] == 0
-    assert set(up["stats"]) >= {"searches", "identity_rotations", "egress_rotations"}
+    guest = body["channels"]["guest"]
+    assert guest["mode"] == "anonymous"
+    assert guest["ready"] is True
+    assert guest["egress"] == "direct"
+    assert set(guest["gate"]) >= {"min_interval_s", "cooldown_remaining_s"}
+    assert "Bearer" in body["routing"]["login"]
 
 
 def test_models_list_all_six_routes(api):
@@ -128,7 +128,7 @@ def test_quota_error_maps_429_with_quota_code(api, monkeypatch):
 def test_gate_cooldown_fail_fast(api, monkeypatch):
     """冷却期内快失败：不触上游，错误带 retry_after。"""
 
-    monkeypatch.setattr(main.gate, "_cooldown_until", 10 ** 12)
+    monkeypatch.setattr(main.guest_channel.gate, "_cooldown_until", 10 ** 12)
     r = api.post(CHAT, json={"model": "metaso:search",
                              "messages": [{"role": "user", "content": "q"}]})
     assert r.status_code == 503
@@ -150,38 +150,47 @@ def test_rate_limit_error_maps_429(api, monkeypatch):
     assert r.json()["error"]["code"] == "upstream_rate_limited"
 
 
-def test_auth_enforced_when_keys_configured(api, monkeypatch):
-    """fail-closed 鉴权：配置 METASO_API_KEYS 后 chat 必须 Bearer key；发现面免鉴权。"""
-
-    frozen = dataclasses.replace(main.settings, ms_api_keys="key-a, key-b")
-    monkeypatch.setattr(main, "settings", frozen)
-
-    r = api.post(CHAT, json={"model": "metaso:search",
-                             "messages": [{"role": "user", "content": "q"}]})
-    assert r.status_code == 401
-    err = r.json()["error"]
-    assert err["code"] == "invalid_api_key"
-    assert err["type"] == "authentication_error"
-
-    bad = api.post(CHAT, headers={"Authorization": "Bearer wrong"},
-                   json={"model": "metaso:search",
-                         "messages": [{"role": "user", "content": "q"}]})
-    assert bad.status_code == 401
-
-    ok = api.post(CHAT, headers={"Authorization": "Bearer key-a"},
-                  json={"model": "metaso:search",
-                        "messages": [{"role": "user", "content": "q"}]})
-    assert ok.status_code == 200
-
-    assert api.get("/health").status_code == 200
-    assert api.get("/v1/models").status_code == 200
-
-
-def test_auth_open_when_no_keys(api):
-    """未配置 METASO_API_KEYS = 鉴权关闭（仅回环/隧道使用的形态）。"""
-    r = api.post(CHAT, json={"model": "metaso:search",
-                             "messages": [{"role": "user", "content": "q"}]})
+def test_bearer_login_cookie_routes_to_login_channel(api, monkeypatch):
+    """Bearer 值含 uid+sid ⇒ 自动建登录通路（独立 client 实例），guest 计数不动。"""
+    monkeypatch.setattr(main, "login_channels", main.LoginChannelCache())
+    r = api.post(CHAT,
+                 headers={"Authorization": "Bearer tid=t;_c_WBKFRo=x;_nb_ioWEgULi=;uid=u1;sid=s1"},
+                 json={"model": "metaso:search",
+                       "messages": [{"role": "user", "content": "q"}]})
     assert r.status_code == 200
+    assert len(main.login_channels) == 1, "按 cookie 建缓存通路"
+    cached = next(iter(main.login_channels._data.values()))[1]
+    assert cached.client.mode == "login"
+    assert cached.client is not main.guest_channel.client, "必须是独立通路实例"
+    assert main.guest_channel.sessions._data == {}, "guest 通路不应被使用"
+
+
+def test_bearer_login_cookie_cached_across_calls(api, monkeypatch):
+    """同一 cookie 的重复调用复用同一登录通路（会话表落在缓存通路上）。"""
+    monkeypatch.setattr(main, "login_channels", main.LoginChannelCache())
+    payload = {"model": "metaso:search", "session_id": "s-login",
+               "messages": [{"role": "user", "content": "q"}]}
+    for _ in range(2):
+        r = api.post(CHAT, headers={"Authorization": "Bearer uid=u1; sid=s1"}, json=payload)
+        assert r.status_code == 200
+    assert len(main.login_channels) == 1, "同一 cookie 复用同一通路"
+    cached = next(iter(main.login_channels._data.values()))[1]
+    assert list(cached.sessions._data) == ["s-login"], "请求路由到了缓存通路"
+    assert main.guest_channel.sessions._data.get("s-login") is None, "guest 通路未被使用"
+
+
+def test_bearer_non_cookie_routes_to_guest(api, monkeypatch):
+    """非 cookie（Bearer guest / 无 token / 乱值）一律走匿名通路。"""
+    monkeypatch.setattr(main, "login_channels", main.LoginChannelCache())
+    guest = main.guest_channel
+    for i, auth in enumerate(({"Authorization": "Bearer guest"}, {},
+                              {"Authorization": "Bearer garbage-token"})):
+        r = api.post(CHAT, headers=auth,
+                     json={"model": "metaso:search", "session_id": f"s-g{i}",
+                           "messages": [{"role": "user", "content": "q"}]})
+        assert r.status_code == 200
+    assert set(guest.sessions._data) == {"s-g0", "s-g1", "s-g2"}, "全部落在匿名通路"
+    assert len(main.login_channels) == 0, "非 cookie bearer 不得建登录通路"
 
 
 def test_not_ready_returns_empty_models_and_503_search(api, monkeypatch):
@@ -190,7 +199,7 @@ def test_not_ready_returns_empty_models_and_503_search(api, monkeypatch):
 
     frozen = dataclasses.replace(main.settings, ms_enabled=False, ms_cookie="")
     monkeypatch.setattr(main, "settings", frozen)
-    monkeypatch.setattr(main, "service", ChatService(frozen, main.client, main.gate))
+    monkeypatch.setattr(main.guest_channel, "settings", frozen)
     body = api.get("/v1/models").json()
     assert body["data"] == [] and body["available"] is False
     r = api.post(CHAT, json={"model": "metaso:search",

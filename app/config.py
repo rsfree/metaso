@@ -66,19 +66,6 @@ class Settings:
     # —— 疑似环境跑容器时直接钉 curl_cffi。
     ms_transport: str = field(default_factory=lambda: _s("METASO_TRANSPORT", "requests").lower())
 
-    # ------------------------------------------------------------ 鉴权（fail-closed）
-    # API keys（逗号分隔）。非空 = chat 端点强制 `Authorization: Bearer <key>`
-    # （fail-closed，baidu 同款）；空 = 不启用鉴权（仅回环/隧道使用）。
-    # 上域名入口前必须配置。
-    ms_api_keys: str = field(default_factory=lambda: _s("METASO_API_KEYS"))
-
-    @property
-    def api_keys(self) -> list[str]:
-        raw = (self.ms_api_keys or "").strip()
-        if not raw:
-            return []
-        return [p.strip() for p in raw.split(",") if p.strip()]
-
     def min_interval_for(self, has_login: bool) -> float:
         """按凭据模式的节流间隔：显式设置（env）优先；未设置时自动 ——
         登录态实测可持续 ~4 发/10s ⇒ 2.5s；匿名 ~13 发/出口/窗口 ⇒ 保守 15s。"""

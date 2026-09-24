@@ -40,7 +40,6 @@ def render_llms_txt(settings: Settings) -> str:
     ready = settings.metaso_ready
     total = len(METASO_MODELS)
     avail = total if ready else 0
-    auth_on = bool(settings.api_keys)
     lines: list[str] = []
     add = lines.append
 
@@ -56,11 +55,11 @@ def render_llms_txt(settings: Settings) -> str:
         "同出口重试无效；服务端已内置自动恢复（换出口/换身份/换 TLS 指纹），"
         "调用方按下方错误表归因即可。")
     add("- `metaso:deepresearch` 匿名额度**必然拒绝**（帧 4001）—— 需上游登录态或官方 API。")
-    add(f"- **鉴权：{'启用' if auth_on else '未启用'}** —— "
-        + ("chat 端点必须 `Authorization: Bearer <key>`（fail-closed）；"
-           "`/health` `/v1/models` `GET /` `/llms.txt` 免鉴权。"
-           if auth_on else
-           "当前部署未配置 `METASO_API_KEYS`，chat 端点开放（仅限回环/内网使用）。"))
+    add("- **鉴权/通路（自动判断，两条）**：`Authorization: Bearer <登录cookie>`"
+        "（值里含 `uid=` 与 `sid=`）→ **登录积分通路**（500/天，首答 ~1s，调用方自带登录态）；"
+        "其余一切请求（含 `Bearer guest` / 无 token）→ **匿名通路**（~13 发/出口/窗口）。"
+        "`/health` `/v1/models` `GET /` `/llms.txt` 免鉴权。"
+        "两条通路均无密钥强度 —— 公网部署即公开。")
     add("- 单一 search 型对话面：**不接受图片输入**，无思考开关；"
         "多轮请传完整历史（匿名上游不落库上下文，服务端已做 flatten）。")
     add("")
@@ -68,8 +67,8 @@ def render_llms_txt(settings: Settings) -> str:
     add("")
     add("| 方法 | 路径 | 鉴权 | 说明 |")
     add("|---|---|---|---|")
-    add("| POST | `/v1/chat/completions` | " + ("Bearer key" if auth_on else "开放") +
-        " | 搜索对话；`\"stream\": true` 走 SSE；`\"dry_run\": true` 干跑不触上游 |")
+    add("| POST | `/v1/chat/completions` | 按 Bearer 自动分流 |"
+        " 搜索对话；`\"stream\": true` 走 SSE；`\"dry_run\": true` 干跑不触上游 |")
     add("| GET | `/v1/models` | 免 | 模型清单（未启用时返回空清单） |")
     add("| GET | `/health` | 免 | 就绪度 + 身份/出口/传输/闸门诊断（脱敏） |")
     add("| GET | `/llms.txt` | 免 | 本文件 |")
@@ -87,10 +86,10 @@ def render_llms_txt(settings: Settings) -> str:
     add("")
     add("```bash")
     add("curl -s -X POST /v1/chat/completions -H 'content-type: application/json' \\")
-    if auth_on:
-        add("  -H 'Authorization: Bearer <key>' \\")
+    add("  -H 'Authorization: Bearer tid=…;_c_WBKFRo=…;_nb_ioWEgULi=;uid=…;sid=…' \\")
     add("  -d '{\"model\":\"metaso:search\",\"messages\":[{\"role\":\"user\",\"content\":\"今天有什么大新闻\"}]}'")
     add("")
+    add("# ↑ 带 uid/sid 的登录 cookie = 登录积分通路；不带该头 = 匿名通路（免登录）")
     add("# 非流式返回：choices[0].message.content + citations + upstream 统计")
     add("# 流式：data: {chat.completion.chunk} … data: [DONE]")
     add("```")
@@ -117,13 +116,12 @@ def render_landing(settings: Settings) -> str:
     ready = settings.metaso_ready
     total = len(METASO_MODELS)
     avail = total if ready else 0
-    auth_on = bool(settings.api_keys)
     models = "".join(
         f"<tr><td><code>{m.model}</code></td><td>{m.title}</td>"
         f"<td>{'⚠️ 实验性' if m.experimental else '✓'}</td></tr>"
         for m in METASO_MODELS)
-    auth_note = ("chat 端点需要 <code>Authorization: Bearer &lt;key&gt;</code>"
-                 if auth_on else "当前未启用鉴权（仅限内网使用）")
+    auth_note = ('通路：<code>Authorization: Bearer &lt;登录cookie（含 uid= 与 sid=）&gt;</code>'
+                 ' → 登录积分通路；其余请求 → 匿名通路')
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -150,7 +148,8 @@ a{{color:#0b62d6}} .muted{{color:#777;font-size:.9em}}
 <table><tr><th>模型</th><th>说明</th><th>状态</th></tr>{models}</table>
 <h2>试一下</h2>
 <pre>curl -s -X POST /v1/chat/completions \\
-  -H 'content-type: application/json' {'-H "Authorization: Bearer &lt;key&gt;" ' if auth_on else ''}\\
+  -H 'content-type: application/json' \\
+  -H 'Authorization: Bearer tid=…;_c_WBKFRo=…;_nb_ioWEgULi=;uid=…;sid=…' \\
   -d '{{"model":"metaso:search","messages":[{{"role":"user","content":"今天有什么大新闻"}}]}}'</pre>
 <p class="muted">频控两层模型（门票=指纹身份 / 额度=出口 IP×窗口）与全部实测取证见
 docs/UPSTREAM.md；LLM 说明：<a href="/llms.txt">/llms.txt</a>。</p>

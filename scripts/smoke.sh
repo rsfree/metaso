@@ -16,7 +16,7 @@ for _ in $(seq 1 40); do
 done
 
 echo "== /health =="
-curl -sf "http://127.0.0.1:$PORT/health" | $PY -c "import json,sys;d=json.load(sys.stdin);print(json.dumps({'ready':d['ready'],'egress':d['upstream']['egress']},ensure_ascii=False))"
+curl -sf "http://127.0.0.1:$PORT/health" | $PY -c "import json,sys;d=json.load(sys.stdin);print(json.dumps({'ready':d['ready'],'guest_egress':d['channels']['guest']['egress']},ensure_ascii=False))"
 echo "== /v1/models =="
 curl -sf "http://127.0.0.1:$PORT/v1/models" | $PY -c "import json,sys;print(len(json.load(sys.stdin)['data']),'models')"
 echo "== /llms.txt 与 / 落地页（免鉴权发现面）=="

@@ -239,9 +239,13 @@ def test_login_429_twice_then_raise(monkeypatch):
 
 
 def test_pinned_identity_429_waits_but_never_rotated(monkeypatch):
-    """pinned（无 uid+sid）：429 走等待重试，但绝不轮换身份；预算耗尽原样上抛。"""
+    """pinned（无 uid+sid）：自动补门票三件套（保留钉死值），429 走等待重试、绝不轮换。"""
     c = make_client(ms_cookie="aliyungf_tc=pinned")
-    assert c.identity_generated is False
+    assert c.mode == "pinned"
+    pinned = {ck.name: ck.value for ck in c.http.cookies}
+    assert pinned["aliyungf_tc"] == "pinned", "钉死值必须原样保留"
+    assert pinned["tid"], "缺门票三件套 ⇒ 自动补随机指纹"
+
     calls = {"n": 0}
 
     def boom(self, *a, **k):
@@ -253,7 +257,8 @@ def test_pinned_identity_429_waits_but_never_rotated(monkeypatch):
     with pytest.raises(RateLimitedError):
         list(c.stream("q", mode="detail"))
     assert calls["n"] == 3, "钉死身份 429：等待重试 2 次后上抛"
-    assert c.stats["identity_rotations"] == 0
+    pinned_after = {ck.name: ck.value for ck in c.http.cookies}
+    assert pinned_after["aliyungf_tc"] == "pinned", "等待重试全程不轮换钉死身份"
 
 
 def test_min_interval_autopace_by_mode(monkeypatch):
