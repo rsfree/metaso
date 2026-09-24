@@ -423,7 +423,7 @@ class MetasoChatClient:
         - WAF 挑战：有池先换出口，仍被挑再升级 curl_cffi；不可用则上抛。
         总尝试封顶 4。
         """
-        emitted = False
+        emitted_content = False   # 只看内容事件；meta 控制帧后重试是安全的（实测 429 前有 meta）
         quota_tried = rate_tried = False
         waf_actions = 0
         for _attempt in range(4):
@@ -432,22 +432,23 @@ class MetasoChatClient:
                         query, mode=mode, engine_type=engine_type,
                         conversation_id=conversation_id,
                         parent_message_id=parent_message_id):
-                    emitted = True
+                    if "delta" in ev or "citations" in ev:
+                        emitted_content = True
                     yield ev
                 return
             except QuotaExhaustedError:
-                if emitted or quota_tried or not self.pool:
+                if emitted_content or quota_tried or not self.pool:
                     raise
                 quota_tried = True
                 self.rotate_egress()
             except RateLimitedError:
-                if emitted or rate_tried or not self.identity_generated:
+                if emitted_content or rate_tried or not self.identity_generated:
                     raise
                 rate_tried = True
                 if not self.rotate_egress():
                     self.rotate_identity()
             except RiskControlError:
-                if emitted or waf_actions >= 2:
+                if emitted_content or waf_actions >= 2:
                     raise
                 waf_actions += 1
                 if self.pool and waf_actions == 1:
