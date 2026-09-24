@@ -159,6 +159,14 @@ def test_no_retry_after_events_emitted(monkeypatch):
         list(c.stream("q", mode="detail"))
 
 
+def test_transport_pin_escalates_at_boot():
+    """METASO_TRANSPORT=curl_cffi：启动即钉 Chrome TLS 指纹（容器部署推荐）。"""
+    c = make_client(ms_transport="curl_cffi")
+    assert c.transport == "curl_cffi"
+    c2 = make_client()
+    assert c2.transport == "requests"
+
+
 def test_4001_rotates_egress_once_when_pool_present(monkeypatch):
     c = make_client(ms_proxy_pool="http://a:1,http://b:2")
     assert c.http.proxies["http"] == "http://a:1"

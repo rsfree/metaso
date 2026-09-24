@@ -61,6 +61,10 @@ class Settings:
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
     ))
+    # 传输钉死：requests（默认）| curl_cffi。实测（2026-09-24）：可疑出口上
+    # python-requests 的 TLS 指纹会被门禁拒（帧 429），Chrome 指纹（curl_cffi）通过
+    # —— 疑似环境跑容器时直接钉 curl_cffi。
+    ms_transport: str = field(default_factory=lambda: _s("METASO_TRANSPORT", "requests").lower())
 
     # ------------------------------------------------------------ 会话登记表
     chat_session_ttl: float = field(default_factory=lambda: _f("CHAT_SESSION_TTL", 1800.0))

@@ -191,6 +191,10 @@ class MetasoChatClient:
         # 池（尤其是「按连接轮换」的隧道型）必须每次请求新建连接 —— keep-alive 会把
         # 出口钉死在单一 IP 上（实测：容器长连接被钉在热 IP 上 6 连 429）。
         self.connection_close = bool(self.pool)
+        # 传输钉死（METASO_TRANSPORT=curl_cffi）：可疑出口上 python-requests 的 TLS
+        # 指纹会被门禁拒（实测帧 429），Chrome 指纹通过 —— 容器部署建议钉死。
+        if settings.ms_transport == "curl_cffi":
+            self._escalate_transport()
 
         self._token = ""
         self._token_at = 0.0
@@ -450,11 +454,16 @@ class MetasoChatClient:
                 quota_tried = True
                 self.rotate_egress()
             except RateLimitedError:
-                if emitted_content or rate_tried or not self.identity_generated:
+                if emitted_content or rate_tried >= 2 or not self.identity_generated:
                     raise
-                rate_tried = True
+                rate_tried += 1
                 if not self.rotate_egress():
                     self.rotate_identity()
+                if rate_tried == 2:
+                    # 两连 429：换身份+换出口都不行 ⇒ 很可能是 TLS 指纹层被拒
+                    # （python-requests JA3 上黑名单，实测 2026-09-24）⇒ 升级 Chrome 指纹
+                    if not self._escalate_transport():
+                        raise
             except RiskControlError:
                 if emitted_content or waf_actions >= 2:
                     raise
