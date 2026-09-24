@@ -109,17 +109,15 @@ def health() -> dict:
         "service": "metaso-service",
         "version": __version__,
         "ready": guest_channel.settings.metaso_ready,
-        "channels": {
-            "guest": {
-                "mode": guest_channel.client.mode,
-                "ready": guest_channel.settings.metaso_ready,
-                "logged_in": guest_channel.client.logged_in,
-                "egress": guest_channel.client.egress_label(),
-                "pool_size": len(guest_channel.client.pool),
-                "transport": guest_channel.client.transport,
-                "gate": guest_channel.gate.stats(),
-            },
-        },
+        "channels": {"guest": {
+            "mode": guest_channel.client.mode,
+            "ready": guest_channel.settings.metaso_ready,
+            "logged_in": guest_channel.client.logged_in,
+            "egress": guest_channel.client.egress_label(),
+            "pool_size": len(guest_channel.client.pool),
+            "transport": guest_channel.client.transport,
+            "gate": guest_channel.gate.stats(),
+        }},
         "login_channels_cached": len(login_channels),
         "routing": {
             "login": "Authorization: Bearer <登录cookie（含 uid= 与 sid=）>",
