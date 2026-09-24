@@ -125,6 +125,21 @@ def test_quota_error_maps_429_with_quota_code(api, monkeypatch):
     assert err["type"] == "rate_limit_error"
 
 
+def test_stream_429_emits_error_chunk_then_done(api, monkeypatch):
+    """429-over-SSE：错误以 data:{error} 帧形式在流内给出，且以 [DONE] 收尾（不断流）。"""
+
+    def boom(self, *a, **k):
+        raise RateLimitedError("突发窗口")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(MetasoChatClient, "_stream_once", boom)
+    r = api.post(CHAT, json={"model": "metaso:search", "stream": True,
+                             "messages": [{"role": "user", "content": "q"}]})
+    assert r.status_code == 200
+    assert '"error"' in r.text and "upstream_rate_limited" in r.text
+    assert r.text.rstrip().endswith("data: [DONE]")
+
+
 def test_gate_cooldown_fail_fast(api, monkeypatch):
     """冷却期内快失败：不触上游，错误带 retry_after。"""
 
