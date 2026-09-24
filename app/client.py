@@ -132,23 +132,22 @@ def _parse_cookie(raw: str) -> requests.cookies.RequestsCookieJar:
     return jar
 
 
-def _iter_sse_lines(r: Any) -> Iterator[str]:
-    """requests 与 curl_cffi 两种响应的流式行迭代统一入口。"""
-    if hasattr(r, "iter_lines"):
-        try:
-            yield from r.iter_lines(decode_unicode=True)
-            return
-        except TypeError:
-            # curl_cffi 老签名不接受 decode_unicode 关键字
-            for line in r.iter_lines():
-                yield line.decode("utf-8", "replace") if isinstance(line, bytes) else line
-            return
-    buf = b""
-    for chunk in r.iter_content(chunk_size=None):
-        buf += chunk
-        while b"\n" in buf:
-            line, buf = buf.split(b"\n", 1)
-            yield line.decode("utf-8", "replace")
+def _iter_sse_lines(r: Any, *, buffered: bool = False) -> Iterator[str]:
+    """requests 与 curl_cffi 两种响应的流式行迭代统一入口。
+
+    buffered=True（curl_cffi 兜底档）：其 iter_content 在部分版本未实现
+    （NotImplementedError）—— SSE 体量小（几十 KB），整读切行可接受。
+    """
+    if not buffered:
+        if hasattr(r, "iter_lines"):
+            try:
+                yield from r.iter_lines(decode_unicode=True)
+                return
+            except (TypeError, NotImplementedError):
+                pass
+    body = r.content
+    for line in body.split(b"\n"):
+        yield line.decode("utf-8", "replace")
 
 
 def _loads(raw: str) -> dict | None:
@@ -189,6 +188,9 @@ class MetasoChatClient:
             self._apply_egress(self.pool[0])
         elif settings.ms_proxy:
             self.http.proxies = {"http": settings.ms_proxy, "https": settings.ms_proxy}
+        # 池（尤其是「按连接轮换」的隧道型）必须每次请求新建连接 —— keep-alive 会把
+        # 出口钉死在单一 IP 上（实测：容器长连接被钉在热 IP 上 6 连 429）。
+        self.connection_close = bool(self.pool)
 
         self._token = ""
         self._token_at = 0.0
@@ -265,13 +267,17 @@ class MetasoChatClient:
         self.stats["transport_escalations"] += 1
         return True
 
-    def _http_get(self, url: str, *, timeout: float) -> Any:
+    def _http_get(self, url: str, *, timeout: float,
+                  connection_close: bool = False) -> Any:
+        headers = {"connection": "close"} if connection_close else None
         if self.transport == "curl_cffi":
-            return self._curl.get(url, timeout=timeout)
-        return self.http.get(url, timeout=timeout)
+            return self._curl.get(url, timeout=timeout, headers=headers)
+        return self.http.get(url, timeout=timeout, headers=headers)
 
     def _http_post_stream(self, url: str, *, body: dict,
                           headers: dict, timeout: Any) -> Any:
+        if self._connection_close:
+            headers = {**headers, "connection": "close"}
         if self.transport == "curl_cffi":
             return self._curl.post(url, json=body, headers=headers,
                                    stream=True, timeout=float(timeout[1]))
@@ -288,7 +294,8 @@ class MetasoChatClient:
         """GET / 取 meta-token，随后 GET /api/my-info 换 JSESSIONID（两步同 jar）。"""
         try:
             r = self._http_get(f"{self.settings.ms_base}/",
-                               timeout=min(30.0, self.settings.ms_timeout))
+                               timeout=min(30.0, self.settings.ms_timeout),
+                               connection_close=self._connection_close)
         except Exception as e:  # noqa: BLE001 - requests/curl_cffi 异常族不同，统一转译
             raise UpstreamUnavailableError(
                 f"metaso 首页请求失败: {e}") from e
@@ -303,7 +310,8 @@ class MetasoChatClient:
         # 预热会话换 JSESSIONID；免登录时 errCode=401 属正常
         try:
             info = self._http_get(f"{self.settings.ms_base}/api/my-info",
-                                  timeout=min(30.0, self.settings.ms_timeout))
+                                  timeout=min(30.0, self.settings.ms_timeout),
+                                  connection_close=self._connection_close)
             self.logged_in = info.json().get("errCode") == 0
         except Exception:  # noqa: BLE001 - 预热失败不致命，搜索仍可能成功
             self.logged_in = bool(self.settings.ms_cookie)
@@ -488,7 +496,8 @@ class MetasoChatClient:
                     head = ""
                 raise self._classify(r.status_code, head)
 
-            for line in _iter_sse_lines(r):
+            for line in _iter_sse_lines(
+                    r, buffered=(self.transport == "curl_cffi")):
                 raw = (line or "").strip()
                 if not raw:
                     continue
