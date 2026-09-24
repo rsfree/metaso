@@ -585,6 +585,19 @@ token 抓取（GET / + my-info）全程正常 ⇒ 不是连通性问题。控制
 metaso-service 的出口必须落在大陆侧（CN 代理池 / CN 中继 / 家宽隧道），或配
 登录 cookie 实测「登录是否豁免地理层」（未验证）。
 
+**追记三（2026-09-24 12:5x）：TLS 指纹层 —— 可疑出口上按 JA3 打分**
+
+同一条快代理隧道（CN 轮换出口）上：容器内 python-requests（Linux OpenSSL 指纹）
+搜索 **5/5 帧 429**，curl_cffi（Chrome 指纹）**1/1 通过**；本机 macOS requests
+直连/过隧道均通过。⇒ 门禁对**出口信誉 × TLS 指纹**做组合评分：大陆家宽放行宽松；
+共享代理池 IP（被大量滥用）上严格挑 TLS 指纹。工程结论：**容器/服务器部署钉
+`METASO_TRANSPORT=curl_cffi`**（已实现开关 + 429 两连自动升级）。
+另两条部署实测：① 隧道型池**按 TCP 连接轮换出口** —— keep-alive 会把出口钉死在
+单 IP（6 连 429 实锤），池模式强制 `Connection: close` 每请求换连接；② curl_cffi
+0.16 同步流式迭代未实现（NotImplementedError）⇒ 该档整包下载后切行。
+③ 共享隧道连续新建连接会触发隧道侧保护（curl 56 connection reset）——
+生产建议独享代理并保持适度节奏。
+
 ---
 
 ## 12. 合规提示
