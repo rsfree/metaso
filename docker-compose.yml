@@ -1,0 +1,19 @@
+services:
+  metaso:
+    build: .
+    image: ghcr.io/rsfree/metaso:latest
+    container_name: metaso-service
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8110:8110"
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8110
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8110/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
